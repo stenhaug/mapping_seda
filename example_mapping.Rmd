@@ -1,0 +1,109 @@
+---
+title: "example_transition"
+author: "Ben Stenhaug"
+output: 
+  github_document:
+    toc: true
+    toc_depth: 6
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# installation: https://r-spatial.github.io/sf/
+library(sf)
+library(tidyverse)
+library(rvest)
+library(rgdal)
+library(viridis)
+```
+
+# Read in shape files
+
+```{r}
+shape <- readOGR(dsn = "SEDA_shapefiles_v20", layer = "2013_Unified_Elementary_SD") %>%
+  st_as_sf()
+```
+
+# Read in scores by district
+
+```{r}
+scores <- read_csv("SEDA_geodist_long_NAEP_v21.csv") %>%
+  filter(year == 2010, subject == "math", grade == 3)
+```
+
+# Simulate random student locations before and after
+
+```{r}
+n_students <- 10000
+
+coordinates_before <- data.frame(
+    lon = runif(n_students, -120, -80), 
+    lat = runif(n_students, 33, 47)
+)
+
+coordinates_after <- data.frame(
+    lon = runif(n_students, -120, -80), 
+    lat = runif(n_students, 33, 47)
+)
+```
+
+# Write  a function that takes coordinates and give district test score
+
+```{r}
+coordinates_to_district_score <- function(coordinates, shape, suffix) {
+  sf <- st_as_sf(coordinates, coords = c("lon", "lat"), crs = st_crs(shape))
+
+  school_district <- st_join(sf, shape, largest = TRUE) %>% select(STATEFP:NAME) 
+
+  scores_df <- school_district %>% 
+      left_join(scores %>% 
+                    select(leaidC, mn_all), by = c("GEOID" = "leaidC"))
+
+  tibble(
+    district = scores_df$NAME, geoid = scores_df$GEOID,
+    district_avg_score = scores_df$mn_all,
+    district_percent = percent_rank(scores_df$mn_all)
+  ) %>%
+    set_names(paste0(names(.), "_", suffix))
+}
+```
+
+# Apply that function to get before and after
+
+```{r}
+before <- coordinates_to_district_score(coordinates_before, shape, "before")
+
+after <- coordinates_to_district_score(coordinates_after, shape, "after")
+```
+
+# Now we can generate transition matrix
+
+```{r}
+get_decile <- function(x){
+    floor(x * 10) / 10
+}
+
+transition <- tibble(
+    before = before$district_percent_before,
+    after = after$district_percent_after
+) %>% 
+    mutate_all(get_decile)
+
+transition %>% 
+    na.omit() %>% 
+    count(before, after) %>% 
+    mutate(n = n / sum(n)) %>% 
+    spread(after, n)
+```
+
+
+
+
+
+
+
+
+
+
+
+
